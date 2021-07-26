@@ -1,6 +1,8 @@
 # Deacon
 
-docker private registry helper
+docker private registry helper  
+![alt](deacon.png)  
+*Deacon help you with  short command for private docker registry*
 
 # usage
 ./deacon.sh [push/pull] [ImageName] [Flags]  
@@ -13,7 +15,7 @@ docker private registry helper
 # 디콘
 
 도커 프라이빗 레지스트리 도우미  
-docker wrapper shell로 일반 사용자가 실수하기 쉬운 부분을 도와줍니다.  
+docker wrapper shell로 짧은 명령어와 일반 사용자가 실수하기 쉬운 부분을 도와줍니다.  
 
 # 사용법
 ./deacon.sh [push/pull] [ImageName] [Flags]  
