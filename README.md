@@ -2,7 +2,7 @@
 
 docker private registry helper  
 ![alt](deacon.png)  
-*Deacon help you with  short command for private docker registry*
+*Deacon help you with a short command for docker private registry*
 
 # usage
 ./deacon.sh [push/pull] [ImageName] [Flags]  
