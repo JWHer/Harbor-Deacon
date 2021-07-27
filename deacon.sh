@@ -1,15 +1,33 @@
 #!/bin/bash
 # Copyright (C) 2021 JWHer
 
-echo "Deacon v1";
+echo "Deacon v1.12";
+# set your own default registry here
+DEFAULT_REG="core.harbor.192.168.1.161.nip.io:30604"
+
+####################     functions     ####################
 
 function usage {
-    echo "USAGE: $0 [push/pull] [ImageName] [Flags]";
-    echo "# --user       -u: 도커 아이디";
-    echo "# --password   -p: 도커 패스워드";
-    echo "# --repository -r: 레포지토리";
-    echo "# --config     -c: 설정위치";
-    echo "# --help       -h: 도움말";
+    echo "Usage: $0 [Command] [Flags]";
+    echo "Commands:";
+    echo "  pull    Pull an image or a repository from a registry";
+    echo "  push    Push an image or a repository to a registry";
+    echo "  login   Log in to a Docker registry";
+    echo "  logout  Log out from a Docker registry";
+}
+
+function usagePushPull {
+    echo "Usage: $0 [push/pull] [ImageName] [Flags]";
+    echo "--user       -u: 도커 아이디";
+    echo "--password   -p: 도커 패스워드";
+    echo "--registry   -r: 레지스트리";
+    echo "--config     -c: 설정위치";
+    echo "--help       -h: 도움말";
+    exit 0;
+}
+
+function usageAuth {
+    echo "Usage: $0 [login/logout]";
     exit 0;
 }
 
@@ -36,7 +54,54 @@ function login {
         ARG="$ARG -p $PW"
     fi
 
-    docker login $HARBOR_REPO $ARG
+    docker login $REGISTRY $ARG
+}
+
+function loginFix {
+    # get daemon.json path
+    # todo: wsl 감지를 잘 못함(Microsoft 파일이 존재x)
+    checkOS;
+    if [ $? -eq 0 ]; then
+        # linux
+        DAEMON='/etc/docker/daemon.json'
+    else
+        # wsl or...
+        DAEMON=$(wslpath "$(wslvar USERPROFILE)")/.docker/daemon.json
+    fi
+
+    # file check
+    if ! [ -f $DAEMON ]; then
+        echo "Cannot find daemon.json"
+        echo "It may require root permission"
+        exit 1;
+    fi
+    
+    DAEMON_EXIST=$(jq ".[\"insecure-registries\"] | contains([\"$REGISTRY\"])" $DAEMON)
+    if [ $DAEMON_EXIST -eq 'true' ]; then
+        echo 'login failed';
+        exit 1;
+    else
+        echo 'insecure registries detected';
+        echo "add $REGISTRY";
+        jq ".[\"insecure-registries\"] += [\"$REGISTRY\"]" $DAEMON >> $DAEMON
+
+        # add registry fail
+        if ! [ $? -eq 0 ]; then
+            echo 'registry add failed';
+            exit 1;
+        fi
+
+        # relogin
+        login;
+        if ! [ $? -eq 0 ]; then
+            echo 'login failed';
+            exit 1;
+        fi
+    fi
+}
+
+function logout {
+    docker logout $REGISTRY
 }
 
 # function getParam {
@@ -49,37 +114,49 @@ function login {
 #     fi
 # }
 
-# push or pull
+####################     parsing     ####################
+
+# get cmd
 CMD=$1;
 shift;
 #echo $@;
-if [ $CMD != 'push' ] && [ $CMD != 'pull' ]; then
-    echo "Only support push or pull, Given $CMD";
-    usage;
-    exit 1;
-fi
+case $CMD in
+    'push' | 'pull')
+        # push/pull
+        IMG_NAME=$1;
+        #[ -z $IMG_NAME ] && echo invalid;
+        shift;
 
-IMG_NAME=$1;
-#[ -z $IMG_NAME ] && echo invalid;
-shift;
+        # check image name
+        if ! [[ $IMG_NAME =~  ^([^\/]+)\/([^\/:]+)\/([^\/:]+):([^\/:\n]+) ]] &&
+        ! [[ $IMG_NAME =~  ^([^\/:]+):([^\/:\n]+) ]]; then
+            echo 'Image name validation failed';
+            echo 'Valid format: ^([^\/]+)\/([^\/:]+)\/([^\/:]+):([^\/:\n]+) or ^([^\/:]+):([^\/:\n]+)';
+            usagePushPull;
+            exit 1;
+        fi
 
-# check image name
-if ! [[ $IMG_NAME =~  ^([^\/]+)\/([^\/:]+)\/([^\/:]+):([^\/:\n]+) ]] &&
-   ! [[ $IMG_NAME =~  ^([^\/:]+):([^\/:\n]+) ]]; then
-    echo 'Image name validation failed';
-    usage;
-    exit 1;
-fi
-
-if [ -z $CMD ] || [ -z $IMG_NAME ]; then
-    echo "Give Command and Image name, Given: $CMD, $IMG_NAME";
-    usage;
-    exit 1;
-fi
+        if [ -z $CMD ] || [ -z $IMG_NAME ]; then
+            echo "Give Command and Image name, Given: $CMD, $IMG_NAME";
+            usagePushPull;
+            exit 1;
+        fi
+        ;;
+    'login')
+        # do nothing
+        ;;
+    'logout')
+        ;;
+    *)
+        echo "Only support push/pull or login/logout, Given $CMD";
+        usage;
+        exit 1;
+        ;;
+esac
 
 # --user u
 # --password p
-# --repository r
+# --registry r
 # --config c
 # --help h
 #PARAM="u:p:r:c:h";
@@ -103,9 +180,9 @@ while (( "$#" )); do
             fi
             shift 2;
             ;;
-        -r|--repository)
+        -r|--registry)
             if [ -n "$2" ] && [ ${2:0:1} != "-" ]; then
-                HARBOR_REPO=$2;
+                REGISTRY=$2;
             else
                 echo "Error: Argument for $1 is missing" >&2
                 exit 1
@@ -122,14 +199,16 @@ while (( "$#" )); do
             shift 2;
             ;;
         h)
-            usage;
+            usagePushPull;
             ;;
         *)
             # default
-            usage;
+            usagePushPull;
             exist 1;
     esac
 done
+
+####################     global verification     ####################
 
 # check CONF parameter
 if [ -z $CONF ]; then
@@ -139,46 +218,67 @@ fi
 
 # check .conf exist
 if [ -f $CONF ];then
-    HARBOR_REPO=$( jq '.harbor_repo' $CONF | sed -e 's/^"//' -e 's/"$//' );
-    #echo $HARBOR_REPO;
+    REGISTRY=$( jq '.registry' $CONF | sed -e 's/^"//' -e 's/"$//' );
+    #echo $REGISTRY;
 else
     echo "creating new '$CONF' file";
 
-    # check HARBOR_REPO parameter
-    if [ -z $HARBOR_REPO ]; then
-        HARBOR_REPO="core.harbor.192.168.1.161.nip.io:30604"
+    # check REGISTRY parameter
+    if [ -z $REGISTRY ]; then
+        REGISTRY=$DEFAULT_REG;
     fi
 
-    echo "set default registry: $HARBOR_REPO";
-    echo "{\"harbor_repo\": \"$HARBOR_REPO\"}">$CONF;
+    echo "set default registry: $REGISTRY";
+    echo "{\"registry\": \"$REGISTRY\"}">$CONF;
 fi
+
+####################     execution & local verification     ####################
+
+# login
+if [ $CMD == 'login' ]; then
+    login;
+    # login fail
+    if ! [ $? -eq 0 ]; then
+        loginFix;
+    fi
+    exit $?;
+fi
+
+# logout
+if [ $CMD == 'logout' ]; then
+    logout;
+    exit $?;
+fi
+
+# push/pull
 
 # check image name
 if [[ $IMG_NAME =~  ^([^\/]+)\/([^\/:]+)\/([^\/:]+):([^\/:\n]+) ]]; then
     # 잘 짜여진 이름일 때
-    # 레포지토리 확인
-    if [ "${BASH_REMATCH[1]}" != "$HARBOR_REPO" ]; then
-        echo 'Repository mismatch';
-        echo "${BASH_REMATCH[1]} != $HARBOR_REPO";
+    # 레지스트리 확인
+    if [ "${BASH_REMATCH[1]}" != "$REGISTRY" ]; then
+        echo 'Registry mismatch';
+        echo "${BASH_REMATCH[1]} != $REGISTRY";
         exit 1;
     fi
 
 elif [[ $IMG_NAME =~  ^([^\/:]+):([^\/:\n]+) ]]; then
-    # 단순 이미지 이름일 때
-    if ! [ -z $ID ]; then
-        LIB=$ID
-    else
-        LIB='library'
-    fi
+    # # 단순 이미지 이름일 때
+    # if ! [ -z $ID ]; then
+    #     LIB=$ID
+    # else
+    #     LIB='library'
+    # fi
+    LIB='library';
 
-    if [ $CMD = 'push' ]; then
-        docker tag $IMG_NAME "$HARBOR_REPO/$LIB/$IMG_NAME";
+    if [ $CMD = '#' ]; then
+        docker tag $IMG_NAME "$REGISTRY/$LIB/$IMG_NAME";
         if ! [ $? -eq 0 ]; then
             echo 'Image tag failed';
             exit 1;
         fi
     fi
-    IMG_NAME="$HARBOR_REPO/$LIB/$IMG_NAME";
+    IMG_NAME="$REGISTRY/$LIB/$IMG_NAME";
 
 else
     echo 'Image name validation failed';
@@ -186,51 +286,12 @@ else
 fi
 
 # debug
-echo "u: $ID p: $PW r: $HARBOR_REPO c: $CONF cmd: $CMD img: $IMG_NAME";
+#echo "u: $ID p: $PW r: $REGISTRY c: $CONF cmd: $CMD img: $IMG_NAME";
 
 login;
 # login fail
 if ! [ $? -eq 0 ]; then
-    # get daemon.json path
-    # todo: wsl 감지를 잘 못함(Microsoft 파일이 존재x)
-    checkOS;
-    if [ $? -eq 0 ]; then
-        # linux
-        DAEMON='/etc/docker/daemon.json'
-    else
-        # wsl or...
-        DAEMON=$(wslpath "$(wslvar USERPROFILE)")/.docker/daemon.json
-    fi
-
-    # file check
-    if ! [ -f $DAEMON ]; then
-        echo "Cannot find daemon.json"
-        echo "It may require root permission"
-        exit 1;
-    fi
-    
-    DAEMON_EXIST=$(jq ".[\"insecure-registries\"] | contains([\"$HARBOR_REPO\"])" $DAEMON)
-    if [ $DAEMON_EXIST -eq 'true' ]; then
-        echo 'login failed';
-        exit 1;
-    else
-        echo 'insecure registries detected';
-        echo "add $HARBOR_REPO";
-        jq ".[\"insecure-registries\"] += [\"$HARBOR_REPO\"]" $DAEMON >> $DAEMON
-
-        # add registry fail
-        if ! [ $? -eq 0 ]; then
-            echo 'registry add failed';
-            exit 1;
-        fi
-
-        # relogin
-        login;
-        if ! [ $? -eq 0 ]; then
-            echo 'login failed';
-            exit 1;
-        fi
-    fi
+    loginFix;
 fi
 
 # echo "hear my roar";
@@ -255,4 +316,4 @@ elif [ $CMD = 'pull' ]; then
 fi
 
 # logout
-docker logout $HARBOR_REPO;
+logout;
