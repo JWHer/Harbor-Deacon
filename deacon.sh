@@ -1,7 +1,7 @@
 #!/bin/bash
 # Copyright (C) 2021 JWHer
 
-echo "Deacon v1.12";
+echo "Deacon v1.13";
 # set your own default registry here
 DEFAULT_REG="core.harbor.192.168.1.161.nip.io:30604"
 
@@ -32,12 +32,22 @@ function usageAuth {
 }
 
 function checkOS {
-    if grep -q Microsoft /proc/version; then
+    if grep -q microsoft /proc/version; then
         #echo "Ubuntu on Windows";
         return 1;
     else
         #echo "native Linux";
         return 0;
+    fi
+}
+
+function isPackageInstalled {
+    dpkg --status $1 &> /dev/null;
+    if [ $? -eq 0 ]; then
+        echo "$1: Already installed";
+    else
+        echo "Install requirements $1";
+        sudo apt-get install -y $1
     fi
 }
 
@@ -59,7 +69,6 @@ function login {
 
 function loginFix {
     # get daemon.json path
-    # todo: wsl 감지를 잘 못함(Microsoft 파일이 존재x)
     checkOS;
     if [ $? -eq 0 ]; then
         # linux
@@ -211,6 +220,7 @@ done
 ####################     global verification     ####################
 
 # check CONF parameter
+# TODO: working directory check
 if [ -z $CONF ]; then
     #echo "parm config not set";
     CONF=".conf";
@@ -221,6 +231,9 @@ if [ -f $CONF ];then
     REGISTRY=$( jq '.registry' $CONF | sed -e 's/^"//' -e 's/"$//' );
     #echo $REGISTRY;
 else
+    # check requirements
+    isPackageInstalled jq;
+
     echo "creating new '$CONF' file";
 
     # check REGISTRY parameter
@@ -271,7 +284,7 @@ elif [[ $IMG_NAME =~  ^([^\/:]+):([^\/:\n]+) ]]; then
     # fi
     LIB='library';
 
-    if [ $CMD = '#' ]; then
+    if [ $CMD = 'push' ]; then
         docker tag $IMG_NAME "$REGISTRY/$LIB/$IMG_NAME";
         if ! [ $? -eq 0 ]; then
             echo 'Image tag failed';
