@@ -47,7 +47,13 @@ DEFAULT_REG="core.harbor.192.168.1.161.nip.io:30604"
 ```
 
 # Update log
-latest version: v1.12
+latest version: v1.13
+
+## v1.13
+* 버그 픽스
+* WSL오류 해결: line 35 fixed (Microsoft->microsoft, bug)
+* WSL오류 해결: line 62 fixed (line 35)
+* push 버그 해결: line 274 fixed (#->push, bug)
 
 ## v1.12
 * `-u` 옵션 사용시에도 library 레포지토리를 사용합니다.  
